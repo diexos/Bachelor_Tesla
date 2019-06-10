@@ -16,45 +16,36 @@
  */
 package com.example.virosample
 
+import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.os.StrictMode
+import android.support.v4.app.ActivityCompat
+import android.support.v4.content.ContextCompat
 import android.util.Log
 import android.util.Pair
+import android.view.View
+import android.view.ViewGroup
 
 
-
-import com.viro.core.ARAnchor
-import com.viro.core.ARImageTarget
-import com.viro.core.ARNode
-import com.viro.core.ARScene
-import com.viro.core.AnimationTimingFunction
-import com.viro.core.AnimationTransaction
-import com.viro.core.AsyncObject3DListener
-
-import com.viro.core.ClickListener
-import com.viro.core.ClickState
-import com.viro.core.Material
-import com.viro.core.Node
-import com.viro.core.Object3D
-import com.viro.core.Sphere
-import com.viro.core.Spotlight
-import com.viro.core.Surface
-import com.viro.core.Texture
+import com.viro.core.*
 import com.viro.core.Vector
-import com.viro.core.ViroView
-import com.viro.core.ViroViewARCore
-import java.io.IOException
-import java.io.InputStream
+import common.CustomSerializer
+import common.Request
+import io.tempo.Tempo
+import java.io.*
 import java.net.Socket
-import java.net.UnknownHostException
-import java.util.Arrays
-import java.util.EnumSet
-import java.util.HashMap
+import java.util.*
+
+
+
+
 
 /**
  * This activity demonstrates how to use an ARImageTarget. When a Tesla logo is
@@ -68,6 +59,10 @@ class ViroActivityAR : Activity(), ARScene.Listener {
     private var mColorChooserGroupNode: Node? = null
     private var mTargetedNodesMap: MutableMap<String, Pair<ARImageTarget, Node>>? = null
     private val mCarColorTextures = HashMap<CAR_MODEL, Texture>()
+    private var listen = false
+    private var time_before = mutableListOf<Long?>()
+
+    private lateinit var client: Socket
 
     private enum class CAR_MODEL private constructor(val carSrc: String, val colorPickerSrc: Vector) {
         WHITE("object_car_main_Base_Color.png", Vector(231f, 231f, 231f)),
@@ -85,10 +80,15 @@ class ViroActivityAR : Activity(), ARScene.Listener {
         super.onCreate(savedInstanceState)
         val policy = StrictMode.ThreadPolicy.Builder().permitAll().build()
         StrictMode.setThreadPolicy(policy)
+
+
         mTargetedNodesMap = HashMap()
         mViroView = ViroViewARCore(this, object : ViroViewARCore.StartupListener {
             override fun onSuccess() {
                 onRenderCreate()
+                displayScene()
+
+
             }
 
             override fun onFailure(error: ViroViewARCore.StartupError, errorMessage: String) {
@@ -96,7 +96,113 @@ class ViroActivityAR : Activity(), ARScene.Listener {
             }
         })
         setContentView(mViroView)
+
     }
+    private fun displayScene() {
+        mScene = ARScene()
+        View.inflate(this, R.layout.viro_view_ar_hud, mViroView as ViewGroup)
+    }
+
+    fun showPopup(v:View) {
+        val builder = AlertDialog.Builder(this)
+        val itemsList = arrayOf<CharSequence>("Client open","Listener start","Client close")
+        builder.setTitle("Client option")
+                .setItems(itemsList) { dialog, which ->
+                    when (which) {
+                        0 -> {
+
+
+                            client = Socket("192.168.178.30", 9999) //connect to server
+                            listen = true
+
+
+                            if (ContextCompat.checkSelfPermission(this,
+                                            Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                                    != PackageManager.PERMISSION_GRANTED) {
+
+                                // Permission is not granted
+                                // Should we show an explanation?
+                                if (ActivityCompat.shouldShowRequestPermissionRationale(this,
+                                                Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+                                    // Show an explanation to the user *asynchronously* -- don't block
+                                    // this thread waiting for the user's response! After the user
+                                    // sees the explanation, try again to request the permission.
+                                } else {
+                                    // No explanation needed, we can request the permission.
+                                    ActivityCompat.requestPermissions(this,
+                                            arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                                            0)
+
+                                    // MY_PERMISSIONS_REQUEST_READ_CONTACTS is an
+                                    // app-defined int constant. The callback method gets the
+                                    // result of the request.
+                                }
+                            } else {
+                                // Permission has already been granted
+                            }
+
+
+                        }
+
+                        1 -> {
+                            mViroView!!.setCameraListener { position, rotation, forward ->
+
+                               if (listen) {
+                                    val timestamp = System.currentTimeMillis()
+                                    time_before.add(timestamp)
+                                    val request = Request(position, rotation, forward)
+                                    val serializer = CustomSerializer()
+                                    val requestBytes = serializer.Serialize(request)
+                                    val output = client.outputStream
+                                    output.write(requestBytes)
+
+
+
+                                }
+
+
+                            }
+                        }
+                        2 -> {
+
+                            client.close()
+                            listen = false
+
+
+
+
+
+
+                            val fileName = "/sdcard/time_before.txt"
+                            val myfile = File(fileName)
+                            myfile.createNewFile()
+                            myfile.printWriter().use { out ->
+
+                                out.write(time_before.toString())
+
+                            }
+
+
+                        }
+
+
+
+
+                    }
+                }
+        val d = builder.create()
+        d.show()
+    }
+
+
+
+
+
+
+
+
+
+
 
     /*
      Create the main ARScene. We add an ARImageTarget representing the Tesla logo to the scene,
@@ -127,7 +233,14 @@ class ViroActivityAR : Activity(), ARScene.Listener {
         // Link the Node with the ARImageTarget, such that when the image target is
         // found, we'll render the Node.
         linkTargetWithNode(teslaTarget, teslaNode)
-    }
+
+
+        }
+
+
+
+
+
 
     /*
      Link the given ARImageTarget with the provided Node. When the ARImageTarget is
@@ -169,22 +282,13 @@ class ViroActivityAR : Activity(), ARScene.Listener {
         val imgTarget = mTargetedNodesMap!![anchorId]!!.first
         mScene!!.removeARImageTarget(imgTarget)
         mTargetedNodesMap!!.remove(anchorId)
-        try {
-            val client = Socket("192.168.178.30", 9999) //connect to server
-
-            client.close()   //closing the connection
-
-        } catch (e: UnknownHostException) {
-            e.printStackTrace()
-        } catch (e: IOException) {
-            e.printStackTrace()
-        }
 
 
-        mViroView!!.setCameraListener { position, rotation, forward ->
 
 
-        }
+
+
+
 
 
     }
@@ -409,11 +513,13 @@ private fun animateColorPickerClicked(picker: Node) {
 override fun onStart() {
   super.onStart()
   mViroView!!.onActivityStarted(this)
+
 }
 
 override fun onResume() {
   super.onResume()
   mViroView!!.onActivityResumed(this)
+
 }
 
 override fun onPause() {
@@ -436,6 +542,7 @@ override fun onTrackingInitialized() {
 }
 
 override fun onTrackingUpdated(state: ARScene.TrackingState, reason: ARScene.TrackingStateReason) {
+
   // No-op
 }
 
